@@ -1,16 +1,17 @@
 <?php
 // Database configuration
-$host = 'localhost';
-$dbname = 'thesis_track';
-$username = 'root';
-$password = '';
+$host = 'sql.freedb.tech';
+$port = 3306;
+$dbname = 'freedb_thesistrack';
+$username = 'freedb_thesisuser';
+$password = 'T737dspm$?FzWzR';
 
 // Create connection
-$conn = new mysqli($host, $username, $password, $dbname);
+$conn = new mysqli($host, $username, $password, $dbname, $port);
 
 try {
     // Create PDO connection
-    $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $username, $password);
+    $pdo = new PDO("mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4", $username, $password);
     
     // Set PDO attributes
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -26,7 +27,7 @@ try {
     if (strpos($e->getMessage(), 'Access denied') !== false) {
         die("Database access denied. Please check username and password.");
     } elseif (strpos($e->getMessage(), 'Unknown database') !== false) {
-        die("Database 'thesis_track' not found. Please create the database first.");
+        die("Database '$dbname' not found. Please create the database first.");
     } else {
         die("Database connection failed: " . $e->getMessage());
     }
@@ -80,26 +81,14 @@ function generatePassword($length = 12) {
     return $password;
 }
 
-// /**
-//  * Log activity to database or file
-//  * @param string $action The action performed
-//  * @param int $userId The user who performed the action
-//  * @param string $details Additional details
-//  */
+// Uncomment if you want to log activity
 // function logActivity($action, $userId = null, $details = null) {
 //     global $pdo;
-    
 //     try {
-//         $stmt = $pdo->prepare("
-//             INSERT INTO activity_logs (user_id, action, details, created_at) 
-//             VALUES (?, ?, ?, NOW())
-//         ");
+//         $stmt = $pdo->prepare("INSERT INTO activity_logs (user_id, action, details, created_at) VALUES (?, ?, ?, NOW())");
 //         $stmt->execute([$userId, $action, $details]);
 //     } catch (PDOException $e) {
-//         // Log to file if database logging fails
 //         error_log("Activity log failed: " . $e->getMessage());
 //     }
 // }
-
-
 ?>
