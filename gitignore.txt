@@ -1,0 +1,30 @@
+# Composer dependencies - always install via composer install
+/vendor/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# PHPUnit
+.phpunit.result.cache
+.phpunit.cache/
+coverage/
+
+# Logs
+*.log
+
+# Uploaded files (if not needed in repo)
+/uploads/
+/test_uploads/
