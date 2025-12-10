@@ -1,5 +1,8 @@
-# ThesisTrack CI Workflow
-# This workflow runs on every push and pull request to validate code quality
+# GitHub Actions CI Workflow for ThesisTrack
+# Generated based on actual test file analysis:
+# - All tests use PDO mocks (no real MySQL connection required)
+# - Tests rely on PHPUNIT_RUNNING constant for bypass logic
+# - PHPUnit 10.x with vendor/autoload.php bootstrap
 
 name: ThesisTrack CI
 
@@ -9,398 +12,125 @@ on:
   pull_request:
     branches: [main, master, develop]
 
-env:
-  DB_HOST: 127.0.0.1
-  DB_NAME: thesis_track
-  DB_USER: root
-  DB_PASS: root
-
 jobs:
-  # ============================================
-  # PHP Validation & Testing
-  # ============================================
-  php-tests:
-    name: PHP Tests (PHP ${{ matrix.php-version }})
+  test:
+    name: PHP ${{ matrix.php-version }} Tests
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
-        php-version: ["8.2", "8.3"]
-
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: thesis_track
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=3
+        php-version: ['8.1', '8.2', '8.3']
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup PHP ${{ matrix.php-version }}
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php-version }}
-          extensions: mbstring, pdo, pdo_mysql, mysqli, intl, zip, gd, bcmath
+          extensions: pdo, pdo_mysql, mbstring, xml, curl, gd, zip
           coverage: xdebug
           tools: composer:v2
 
       - name: Validate composer.json
-        run: composer validate --no-check-all --no-check-publish || true
-
-      - name: Get Composer Cache Directory
-        id: composer-cache
-        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+        run: composer validate --strict
 
       - name: Cache Composer dependencies
         uses: actions/cache@v4
         with:
-          path: ${{ steps.composer-cache.outputs.dir }}
-          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock', '**/composer.json') }}
+          path: vendor
+          key: composer-${{ matrix.php-version }}-${{ hashFiles('composer.lock', 'composer.json') }}
           restore-keys: |
-            ${{ runner.os }}-composer-
+            composer-${{ matrix.php-version }}-
 
-      - name: Install Composer dependencies
-        run: composer install --prefer-dist --no-progress || composer update --prefer-dist --no-progress
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
 
-      - name: PHP Lint Check
+      - name: Create required directories
         run: |
-          echo "Running PHP Syntax Check..."
-          error_count=0
-          while IFS= read -r -d '' file; do
-            if ! php -l "$file" > /dev/null 2>&1; then
-              php -l "$file"
-              error_count=$((error_count + 1))
-            fi
-          done < <(find . -name "*.php" -not -path "./vendor/*" -print0)
-          
-          if [ $error_count -gt 0 ]; then
-            echo "Found $error_count PHP syntax error(s)"
-            exit 1
-          fi
-          echo "PHP Lint Check Passed!"
+          mkdir -p uploads/chapters
+          mkdir -p .phpunit.cache
 
-      - name: Wait for MySQL
-        run: |
-          for i in {1..30}; do
-            if mysqladmin ping -h"127.0.0.1" --silent 2>/dev/null; then
-              echo "MySQL is ready!"
-              break
-            fi
-            echo "Waiting for MySQL... ($i/30)"
-            sleep 1
-          done
-
-      - name: Setup Database Schema
-        run: |
-          if [ -f "db/thesis_track.sql" ]; then
-            mysql -h 127.0.0.1 -u root -proot thesis_track < db/thesis_track.sql || true
-          fi
-
-      - name: Run PHPUnit Tests
-        run: |
-          echo "Running PHPUnit Test Suite..."
-          echo ""
-          echo "Test Files Found:"
-          find tests -name '*Test.php' -type f 2>/dev/null | sort || echo "No test files found"
-          echo ""
-          test_count=$(find tests -name '*Test.php' -type f 2>/dev/null | wc -l)
-          echo "Total Test Files: $test_count"
-          echo "============================================"
-          
-          if [ -f "vendor/bin/phpunit" ]; then
-            ./vendor/bin/phpunit --configuration phpunit.xml --testdox --colors=always
-          else
-            echo "PHPUnit not installed, skipping tests"
-          fi
+      - name: Run PHPUnit tests
+        run: vendor/bin/phpunit --configuration phpunit.xml --testdox --colors=always
         env:
+          # Environment variables matching phpunit.xml configuration
           DB_HOST: 127.0.0.1
           DB_NAME: thesis_track
           DB_USER: root
-          DB_PASS: root
+          DB_PASS: ""
 
-      - name: Generate Coverage Report
-        if: matrix.php-version == '8.2'
-        continue-on-error: true
-        run: |
-          if [ -f "vendor/bin/phpunit" ]; then
-            echo "Generating Code Coverage Report..."
-            ./vendor/bin/phpunit --configuration phpunit.xml --coverage-text --coverage-clover=coverage.xml 2>/dev/null || true
-          fi
-        env:
-          DB_HOST: 127.0.0.1
-          DB_NAME: thesis_track
-          DB_USER: root
-          DB_PASS: root
-
-      - name: Upload Coverage Artifact
-        if: matrix.php-version == '8.2'
+      - name: Upload test results
+        if: always()
         uses: actions/upload-artifact@v4
-        continue-on-error: true
         with:
-          name: coverage-report
-          path: coverage.xml
+          name: test-results-php-${{ matrix.php-version }}
+          path: .phpunit.cache/
           retention-days: 7
-          if-no-files-found: ignore
 
-  # ============================================
-  # PHP Static Analysis (Non-blocking)
-  # ============================================
-  php-analysis:
-    name: PHP Static Analysis
+  # Optional: Run specific test suites separately for better visibility
+  test-suites:
+    name: Test Suite - ${{ matrix.suite }}
     runs-on: ubuntu-latest
+    needs: test
+
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [Unit, Authentication, Features]
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.2"
-          extensions: mbstring, pdo, pdo_mysql
-          tools: phpcs
-
-      - name: Install Composer dependencies
-        continue-on-error: true
-        run: composer install --prefer-dist --no-progress || composer update --prefer-dist --no-progress
-
-      - name: Run PHP CodeSniffer (PSR-12)
-        run: |
-          echo "Running PHP CodeSniffer (PSR-12 standard)..."
-          echo "Note: This is informational only and will not fail the build"
-          echo ""
-          
-          # Count files to analyze
-          file_count=$(find . -name "*.php" -not -path "./vendor/*" -not -path "./tests/*" | wc -l)
-          echo "Analyzing $file_count PHP files..."
-          echo ""
-          
-          # Run PHPCS with summary only (non-blocking)
-          phpcs --standard=PSR12 --extensions=php \
-            --ignore=vendor/*,node_modules/*,tests/* \
-            --report=summary \
-            --warning-severity=0 \
-            . 2>/dev/null || true
-          
-          echo ""
-          echo "Code style analysis completed (informational only)"
-
-  # ============================================
-  # Frontend Validation (Non-blocking)
-  # ============================================
-  frontend-validation:
-    name: Frontend Validation
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install Frontend Linters
-        run: |
-          npm install --no-save stylelint stylelint-config-standard eslint@8 || true
-
-      - name: Create Linter Configs
-        run: |
-          # ESLint config
-          cat > .eslintrc.json << 'EOF'
-          {
-            "env": {
-              "browser": true,
-              "es2021": true,
-              "jquery": true
-            },
-            "extends": "eslint:recommended",
-            "parserOptions": {
-              "ecmaVersion": "latest",
-              "sourceType": "script"
-            },
-            "globals": {
-              "Swal": "readonly",
-              "bootstrap": "readonly",
-              "$": "readonly",
-              "jQuery": "readonly"
-            },
-            "rules": {
-              "no-unused-vars": "warn",
-              "no-undef": "warn",
-              "no-empty": "warn"
-            }
-          }
-          EOF
-          
-          # Stylelint config
-          cat > .stylelintrc.json << 'EOF'
-          {
-            "extends": "stylelint-config-standard",
-            "rules": {
-              "no-descending-specificity": null,
-              "selector-class-pattern": null,
-              "custom-property-pattern": null,
-              "property-no-vendor-prefix": null,
-              "declaration-block-no-redundant-longhand-properties": null,
-              "font-family-no-missing-generic-family-keyword": null,
-              "color-function-notation": null,
-              "alpha-value-notation": null
-            }
-          }
-          EOF
-
-      - name: Lint CSS Files
-        run: |
-          echo "Linting CSS files..."
-          echo "Note: This is informational only and will not fail the build"
-          echo ""
-          
-          if [ -d "CSS" ]; then
-            css_count=$(find CSS -name "*.css" 2>/dev/null | wc -l)
-            echo "Found $css_count CSS files"
-            
-            if [ $css_count -gt 0 ]; then
-              npx stylelint "CSS/**/*.css" --formatter compact 2>/dev/null || true
-            fi
-          else
-            echo "No CSS directory found, skipping"
-          fi
-          
-          echo ""
-          echo "CSS linting completed (informational only)"
-
-      - name: Lint JavaScript Files
-        run: |
-          echo "Linting JavaScript files..."
-          echo "Note: This is informational only and will not fail the build"
-          echo ""
-          
-          if [ -d "JS" ]; then
-            js_count=$(find JS -name "*.js" 2>/dev/null | wc -l)
-            echo "Found $js_count JavaScript files"
-            
-            if [ $js_count -gt 0 ]; then
-              npx eslint "JS/**/*.js" --format compact 2>/dev/null || true
-            fi
-          else
-            echo "No JS directory found, skipping"
-          fi
-          
-          echo ""
-          echo "JavaScript linting completed (informational only)"
-
-  # ============================================
-  # Security Scan (Non-blocking)
-  # ============================================
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.2"
+          php-version: '8.2'
+          extensions: pdo, pdo_mysql, mbstring, xml, curl, gd, zip
           tools: composer:v2
 
-      - name: Install Composer dependencies
-        continue-on-error: true
-        run: composer install --prefer-dist --no-progress || composer update --prefer-dist --no-progress
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-8.2-${{ hashFiles('composer.lock', 'composer.json') }}
+          restore-keys: |
+            composer-8.2-
 
-      - name: Check for known vulnerabilities
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      - name: Create required directories
         run: |
-          echo "Checking for known security vulnerabilities..."
-          echo "Note: This is informational only and will not fail the build"
-          echo ""
-          
-          composer audit 2>/dev/null || echo "Composer audit completed (no critical issues or audit not supported)"
-          
-          echo ""
-          echo "Vulnerability check completed (informational only)"
+          mkdir -p uploads/chapters
+          mkdir -p .phpunit.cache
 
-      - name: Basic Security Patterns Check
-        run: |
-          echo "Checking for potentially dangerous patterns..."
-          echo "Note: This is informational only and will not fail the build"
-          echo ""
-          
-          found_issues=0
-          
-          # Check for eval() usage
-          eval_count=$(grep -rn "eval\s*(" --include="*.php" --exclude-dir=vendor . 2>/dev/null | wc -l)
-          if [ $eval_count -gt 0 ]; then
-            echo "Warning: Found $eval_count instance(s) of eval() - review for security"
-            found_issues=$((found_issues + eval_count))
-          fi
-          
-          # Check for exec() usage
-          exec_count=$(grep -rn "\bexec\s*(" --include="*.php" --exclude-dir=vendor . 2>/dev/null | wc -l)
-          if [ $exec_count -gt 0 ]; then
-            echo "Warning: Found $exec_count instance(s) of exec() - review for security"
-            found_issues=$((found_issues + exec_count))
-          fi
-          
-          # Check for shell_exec() usage
-          shell_count=$(grep -rn "shell_exec\s*(" --include="*.php" --exclude-dir=vendor . 2>/dev/null | wc -l)
-          if [ $shell_count -gt 0 ]; then
-            echo "Warning: Found $shell_count instance(s) of shell_exec() - review for security"
-            found_issues=$((found_issues + shell_count))
-          fi
-          
-          if [ $found_issues -eq 0 ]; then
-            echo "No dangerous patterns detected"
-          fi
-          
-          echo ""
-          echo "Security patterns check completed (informational only)"
+      - name: Run ${{ matrix.suite }} test suite
+        run: vendor/bin/phpunit --configuration phpunit.xml --testsuite ${{ matrix.suite }} --testdox --colors=always
+        env:
+          DB_HOST: 127.0.0.1
+          DB_NAME: thesis_track
+          DB_USER: root
+          DB_PASS: ""
 
-  # ============================================
-  # Summary Job
-  # ============================================
-  ci-summary:
-    name: CI Summary
+  # Syntax check for all PHP files
+  lint:
+    name: PHP Syntax Check
     runs-on: ubuntu-latest
-    needs: [php-tests, php-analysis, frontend-validation, security-scan]
-    if: always()
 
     steps:
-      - name: Check Results
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: php-parallel-lint
+
+      - name: Run PHP syntax check
         run: |
-          echo "============================================"
-          echo "           CI Pipeline Summary              "
-          echo "============================================"
-          echo ""
-          echo "PHP Tests:           ${{ needs.php-tests.result }}"
-          echo "PHP Analysis:        ${{ needs.php-analysis.result }} (informational)"
-          echo "Frontend Validation: ${{ needs.frontend-validation.result }} (informational)"
-          echo "Security Scan:       ${{ needs.security-scan.result }} (informational)"
-          echo ""
-          echo "============================================"
-          echo ""
-          echo "Note: Only PHP Tests are blocking."
-          echo "Other checks are informational and provide"
-          echo "code quality insights without blocking merges."
-          echo ""
-          
-          # Only fail if PHP tests failed
-          if [ "${{ needs.php-tests.result }}" == "failure" ]; then
-            echo "PHP Tests failed - this is a blocking issue"
-            exit 1
-          fi
-          
-          echo "CI Pipeline completed successfully!"
+          find . -name "*.php" -not -path "./vendor/*" -print0 | xargs -0 -n1 php -l
