@@ -25,6 +25,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: false
 
       - name: Setup PHP ${{ matrix.php-version }}
         uses: shivammathur/setup-php@v2
@@ -56,7 +58,6 @@ jobs:
       - name: Run PHPUnit tests
         run: vendor/bin/phpunit --configuration phpunit.xml --testdox --colors=always
         env:
-          # Environment variables matching phpunit.xml configuration
           DB_HOST: 127.0.0.1
           DB_NAME: thesis_track
           DB_USER: root
@@ -68,9 +69,9 @@ jobs:
         with:
           name: test-results-php-${{ matrix.php-version }}
           path: .phpunit.cache/
+          if-no-files-found: ignore
           retention-days: 7
 
-  # Optional: Run specific test suites separately for better visibility
   test-suites:
     name: Test Suite - ${{ matrix.suite }}
     runs-on: ubuntu-latest
@@ -84,6 +85,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: false
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -116,7 +119,6 @@ jobs:
           DB_USER: root
           DB_PASS: ""
 
-  # Syntax check for all PHP files
   lint:
     name: PHP Syntax Check
     runs-on: ubuntu-latest
@@ -124,6 +126,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: false
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
